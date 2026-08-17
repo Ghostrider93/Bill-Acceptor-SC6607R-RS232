@@ -15,7 +15,9 @@ yourself with `build.cmd`.
 * Shows a running total in big type, plus a per denomination breakdown.
 * **Return notes after counting** checkbox. Leave it ticked if you have no
   cashbox fitted, otherwise a stack command drives the note into an empty bay.
-  Untick it to actually keep the notes.
+  Untick it to actually keep the notes, which needs a real cashbox. With no
+  cashbox it takes the note and then faults, see
+  [../docs/CASHBOX.md](../docs/CASHBOX.md).
 * **Alerts on a rejected note.** The screen flashes red, a banner reads
   `!! BILL NOT READ !!`, and it plays an error beep. The **Sound** checkbox turns
   the beep off. Same treatment for a cheat attempt.

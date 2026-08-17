@@ -7,32 +7,108 @@ protocol. Both of those are true, and it still works anyway.
 
 ## The short version
 
-**Shine infrared light on the optical sensor in the cashbox bay while the unit
-initialises.** That is it. Once it reaches idling it latches ready and you can
-take the IR source away.
-
-A phone works. Hold the phone near the sensors in the bay during power up. Phone
-front cameras and proximity sensors emit IR, and that is enough.
+**Flash light at the optical receiver in the cashbox bay while the unit boots.**
+Point light at the receiver and switch it on and off a few times during the
+startup cycle. Not steady light, flashing.
 
 With that done the unit:
 
-* clears PowerUp in about 5 seconds instead of timing out at 19,
+* clears PowerUp instead of timing out at 19 seconds,
 * reaches `Idling` with `CassettePresent` set,
+* does not raise the no cashbox alarm,
 * accepts, validates and returns real notes normally.
 
 Verified with `$1`, `$5` and `$50`, all recognised through a full
 `Accepting` to `Escrowed` to `Returning` to `Returned` cycle, over thousands of
 polls with zero checksum errors.
 
+### Steady light is not enough
+
+This is the part that took the longest to pin down, because steady light looks
+like it is working:
+
+| What you do during boot | `CassettePresent` | Result |
+|-------------------------|-------------------|--------|
+| Nothing | Not set | Times out at 19 s, amber, no cashbox |
+| Hold a steady light on the receiver | **Set** | **Still goes into error** |
+| **Flash the light on and off a few times** | **Set** | **No alarm, unit works** |
+
+So the presence bit and the alarm are two separate checks. A steady beam
+satisfies presence and fails whatever the second check is. Only a changing signal
+gets you through both.
+
+That also explains why a phone works. You are holding it by hand near the
+sensors, so the light is never really steady.
+
+### The timing window is during boot only
+
+Once it has finished booting and gone into the no cashbox error, you cannot talk
+your way back in:
+
+* Point the light at the receiver after the fault, and `CassettePresent` comes
+  back on, but the unit stays in error.
+* Flashing it after the fault does not clear the error either.
+
+If you miss the window, cut the power and start again.
+
+## Getting light onto the receiver
+
+A **fiber optic cable** is the tool that made this repeatable. Feed one end at
+the receiver in the bay and you can flash the other end by hand, well clear of
+the mechanism, without trying to aim anything into a slot.
+
+The emitter and receiver sit in the bay side walls, one per side, emitter on the
+left and receiver on the right.
+
 ## Rules once it is running
 
-* **The IR is needed during initialisation only.** After it reaches idling, take
-  the phone away and it keeps running indefinitely. I have read notes cleanly
-  long after the IR source was removed.
-* **Any reset back into PowerUp without IR present fails to re-init.** If it
-  drops back, you need the IR again.
 * **Run with `-OnEscrow Return`.** With no cashbox fitted, a stack command drives
-  the note into an empty bay. Hand it back instead.
+  the note into an empty bay. See the stacking section below for what happens if
+  you try it anyway.
+* **Any reset back into PowerUp needs the flashing again.** If it drops back to
+  power up, you are starting from scratch.
+
+## Stacking still does not work
+
+Reading and returning notes is solved. Keeping them is not.
+
+| Setup | What happens |
+|-------|--------------|
+| Set to keep the note, no light at the receiver | Takes the note, then errors out with no cashbox |
+| Set to keep the note, light at the receiver | Shows `CassettePresent`, still errors |
+
+So the check is not a one time thing at boot. It runs again during the stack
+cycle, and having the beam merely lit is not enough there either.
+
+## What the sensor is probably doing
+
+Putting the boot behaviour and the stacking behaviour together, the most likely
+explanation is that this is a **motion or position sensor, not a presence
+sensor.**
+
+The reasoning:
+
+* Steady beam is rejected, changing beam is accepted. That is what you would
+  expect if the firmware is looking for transitions rather than a level.
+* The chassis carries one half of a drive coupling, a black compound gear. The
+  cashbox carries the other half, an exposed metal gear train across its
+  insertion face.
+* The firmware drives that gear train on boot and again when stacking a note.
+
+So the cashbox very likely carries a **slotted wheel or a window that chops the
+beam** as the mechanism turns. The firmware drives the motor and counts the
+resulting pulses to confirm the mechanism actually moved. No cashbox means no
+chopper, which means a constant beam, which reads as a stalled mechanism, which
+is the error.
+
+Flashing by hand fakes those pulses well enough to get through the boot check.
+It clearly does not fake them well enough for the stack cycle, where the timing
+against the motor almost certainly matters.
+
+**This is a theory, not a confirmed finding.** It fits everything observed so
+far, but I have not yet put a scope on the receiver, and I have never seen a real
+cashbox turn in this unit to compare against. Treat the pulse count, the pattern
+and the timing as completely unknown.
 
 ```powershell
 .\tools\EBDS-Host.ps1 -PortName COM4 -EnableMask 0x7F -OnEscrow Return -PollMs 100 -Seconds 120
@@ -42,11 +118,15 @@ polls with zero checksum errors.
 
 Watch reply byte 1 bit 4, `CassettePresent`. The pass condition is:
 
-**byte 1 bit 4 set, and byte 0 showing `Idling`.**
+**byte 1 bit 4 set, byte 0 showing `Idling`, and no error.**
 
-Without the IR you get `Idling` with byte 1 at `0x00` and a steady amber LED,
-which is diagnostic code 5, cashbox removed or not home. With it you get byte 1
-at `0x10` and a green LED.
+All three matter. **`CassettePresent` on its own does not mean you succeeded.**
+Steady light will set that bit and leave the unit in error, which is exactly the
+trap described above. Check the LED as well as the status byte.
+
+Without any light you get `Idling` with byte 1 at `0x00` and a steady amber LED,
+which is diagnostic code 5, cashbox removed or not home. When it has genuinely
+worked you get byte 1 at `0x10`, a green LED, and notes go through.
 
 ```
 No cashbox, no IR:   02 0B 21 01 00 00 10 55 23 03 4D    idling, byte1 = 0x00
@@ -80,11 +160,13 @@ So everything that senses anything lives in the chassis:
   wired to the EBDS interface board. The box depresses it mechanically on
   insertion.
 * **Two IR optical devices** set into the bay side walls, one per side. Emitter
-  on the left, receiver on the right. These are what the IR trick is talking to.
+  on the left, receiver on the right. These are what the flashing is talking to.
 
 On power up the firmware runs the stacker home cycle and looks for confirmation
-that the mechanism is where it should be. Interrupt that confirmation and it
-fails. Satisfy it, by any means, and it carries on.
+that the mechanism actually moved. With no cashbox there is nothing to chop the
+beam, so no confirmation arrives and it faults. Give it a changing signal and it
+carries on. See [What the sensor is probably doing](#what-the-sensor-is-probably-doing)
+for why a changing signal and not just any signal.
 
 ## What did not work
 
@@ -161,50 +243,81 @@ It is optical.
 
 ### Modulated IR, and blocking the beam
 
-Two more dead ends worth recording.
+Two more half wrong theories worth recording, because the truth turned out to sit
+between them.
 
-I assumed the sensor pair had to be modulated, on the reasoning that any sensible
-optical sensor rejects ambient light, and therefore a plain DC IR source could
-never satisfy it. That is wrong. The detector responds to plain unmodulated IR,
-which is exactly why a phone works.
+I first assumed the sensor pair had to be **carrier modulated**, on the reasoning
+that any sensible optical sensor rejects ambient light, so a plain DC source could
+never satisfy it. That is wrong at the hardware level. The detector responds fine
+to plain unmodulated light, and you can prove it by holding a steady source on the
+receiver and watching `CassettePresent` come on.
+
+But it was right about one thing, and I dismissed it too early. The firmware does
+want a **changing** signal, just not a carrier. Slow hand flashing is enough. If I
+had taken the modulation idea seriously and tried pulsing by hand at that point
+instead of switching to steady sources, this would have been solved much sooner.
 
 I also tried the opposite, blocking the beam with opaque tape on the theory that
-the cashbox occludes it. Also wrong. It needs to **see** IR, not lose it.
+the cashbox occludes it. Wrong in that form. It needs to see light change, not
+simply lose it.
 
 ### A discrete IR LED
 
-Tried an ordinary IR LED with a series resistor off the 12 V rail and it did not
-work for me, where the phone does. The likely reasons are aim and intensity,
-since the sensor sits at an angle in the moulding, and there may be reflective
-surfaces inside a real cashbox that the geometry depends on. This is worth
-another attempt with better alignment.
+Tried an ordinary IR LED with a series resistor off the 12 V rail. It did not
+work steady, which now makes sense, and **it did not work flashed either**, which
+is the more interesting result. The same flashing that works through a fiber
+optic cable fails with the LED.
+
+I do not have an explanation for that yet. Candidates worth testing:
+
+* Aim and intensity. The receiver sits at an angle in the moulding, and the fiber
+  puts light exactly where it needs to go while a loose LED does not.
+* Wavelength. The LED I used may not match what the receiver is tuned for.
+* Swamping. Too much light spilling around the bay could hold the receiver on
+  even between flashes, which would turn the flashes back into a steady signal
+  from the firmware's point of view.
+
+The fiber optic cable is the reliable method for now.
 
 ## Still open
 
-**Bridging the detector electrically.** The receiver is a two pin device, so it
-is a bare photodiode or phototransistor with its load resistor on the board,
-which means shorting it is current limited and safe to try. A jumper across those
-two pads would make the bypass permanent with no light source at all.
+### A soldered jumper will probably not work
 
-I have not proved this yet. Every attempt so far was captured while the unit was
-already initialised and latched, so no fresh initialisation ever happened inside
-the capture window and the bridge was never actually tested.
+I spent a while planning to solder a permanent jumper across the two pin
+receiver, on the theory that a short would look like a permanently satisfied
+sensor. **The steady versus flashing result argues strongly against that.**
 
-If you want to try it, the test has to be:
+A dead short is the most steady signal you can possibly give it. Steady is
+exactly the case that sets `CassettePresent` and then errors anyway. So a static
+jumper, a static resistor, or a static LED should all fail for the same reason,
+and the LED already has.
 
-1. Bridge the two pads and hold.
-2. Still holding, **cut the 12 V**.
-3. Wait a few seconds.
-4. Power back on, still holding.
-5. Keep holding another 20 seconds.
+If you want a permanent hands free bypass, it needs to **oscillate**, not sit
+still. A 555 or a small microcontroller driving the receiver line or an emitter
+is the shape of the answer. The open question is what it should output.
 
-The power cycle is the step that matters. Without it the unit is still latched
-from before and the result means nothing. Watch for PowerUp clearing a few
-seconds after power returns.
+### What to work out next
 
-If a dead short does nothing, try resistors across the pads instead, working down
-from 100 k to 10 k to 1 k. A phototransistor in light is a resistance, not a
-short, and the firmware may be looking for a value rather than a rail.
+1. **Scope the receiver line with a real cashbox fitted.** This is the one
+   measurement that would settle everything. Capture the waveform during boot and
+   during a stack cycle and the pattern stops being guesswork.
+2. **Count the pulses.** Try a fixed number of flashes during boot, two, three,
+   five, and find out whether the count matters or only the fact that it changed.
+3. **Work out the stack cycle timing.** Reading and returning works now, keeping
+   the note does not. If the pulses have to line up with the motor, a hand
+   flashed fiber will never do it and it becomes a microcontroller job triggered
+   off the motor.
+4. **Try other wavelengths and a tighter mount for the LED**, since the fiber
+   works and the LED does not.
+
+### Why this matters beyond the bypass
+
+If the pulse pattern turns out to be a fixed code rather than plain motion, that
+is worth knowing. The gears meshing with a slotted window would produce a
+repeatable sequence, and the firmware may well be checking for that specific
+sequence rather than just movement. Right now I cannot tell the difference
+between "it saw motion" and "it saw the right code", because hand flashing is
+sloppy enough to produce either.
 
 ## Parts, if you would rather just buy a cashbox
 

@@ -25,8 +25,19 @@ with the C# compiler that already ships inside Windows.
 * Real note validation. `$1`, `$5` and `$50` have all been read correctly and
   returned through a full accept and return cycle.
 * Escrow control, so you decide per note whether it gets stacked or handed back.
-* **Running with no cashbox installed.** See [docs/CASHBOX.md](docs/CASHBOX.md).
+* **Running with no cashbox installed**, by flashing light at the optical
+  receiver in the bay while the unit boots. Steady light is not enough, it has to
+  flash. See [docs/CASHBOX.md](docs/CASHBOX.md).
 * A Windows money counter app that talks to the unit and keeps a running total.
+
+## What does not work yet
+
+**Stacking without a cashbox.** Reading and returning notes is solved, keeping
+them is not. Set it to keep the note and it takes the note and then errors out
+with a cashbox fault, whether or not there is light on the receiver. The check
+runs again during the stack cycle and hand flashing does not get through it.
+
+Run with `-OnEscrow Return` until that is sorted.
 
 ## Quick start
 

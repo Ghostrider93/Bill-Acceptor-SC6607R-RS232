@@ -144,6 +144,8 @@ Check your supply rating before chasing this as a protocol problem.
 | Nothing answers on any port | TX and RX swapped, no 12 V, or wrong port |
 | Answers but stuck in PowerUp forever | Polling too slowly, set `-PollMs 100` |
 | Idles fine but will not take a note, steady amber | No cashbox, see [CASHBOX.md](CASHBOX.md) |
+| Takes the note, then faults with no cashbox | Set to stack with no cashbox fitted. Use return instead, see [CASHBOX.md](CASHBOX.md) |
+| Shows cashbox present but sits in error anyway | Steady light on the bay receiver. It has to flash, see [CASHBOX.md](CASHBOX.md) |
 | Note goes in and comes straight back out | Denomination disabled by the coupon, or the note is dirty or folded |
 | `Access to the port 'COM4' is denied` | Something else has the port open |
 | Checksum mismatches only during motor runs | Supply sag or motor noise, see above |
